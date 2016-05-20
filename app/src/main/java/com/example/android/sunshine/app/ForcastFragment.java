@@ -1,8 +1,11 @@
 package com.example.android.sunshine.app;
 
+import android.content.Intent;
+import android.content.SharedPreferences;
 import android.net.Uri;
 import android.os.AsyncTask;
 import android.os.Bundle;
+import android.preference.PreferenceManager;
 import android.support.v4.app.Fragment;
 import android.text.format.Time;
 import android.util.Log;
@@ -30,6 +33,8 @@ import java.text.SimpleDateFormat;
 
 public class ForcastFragment extends Fragment {
 
+    private final String LOG_TAG = this.getClass().getSimpleName();
+
     private ArrayAdapter<String> arrayAdapter;
 
     public ForcastFragment() {
@@ -53,14 +58,27 @@ public class ForcastFragment extends Fragment {
         // automatically handle clicks on the Home/Up button, so long
         // as you specify a parent activity in AndroidManifest.xml.
         int id = item.getItemId();
-
         //noinspection SimplifiableIfStatement
-        if (id == R.id.action_refresh) {
-            new FetchWeatherTask().execute("98007");
-            return true;
+        switch (id) {
+            case R.id.action_map_view:
+                viewLocationOnMap();
+                return true;
+            case R.id.action_refresh:
+                fetchWeather();
+                return true;
+            case R.id.action_settings:
+                Intent intent = new Intent(getActivity(), SettingsActivity.class);
+                startActivity(intent);
+                return true;
+            default:
+                return super.onOptionsItemSelected(item);
         }
+    }
 
-        return super.onOptionsItemSelected(item);
+    @Override
+    public void onStart() {
+        super.onStart();
+        fetchWeather();
     }
 
     @Override
@@ -73,10 +91,31 @@ public class ForcastFragment extends Fragment {
         listView.setOnItemClickListener(new AdapterView.OnItemClickListener() {
             @Override
             public void onItemClick(AdapterView<?> parent, View view, int position, long id) {
-
+                String forecast = arrayAdapter.getItem(position);
+                Intent intent = new Intent(getActivity(), DetailActivity.class).putExtra(Intent.EXTRA_TEXT, forecast);
+                startActivity(intent);
             }
         });
         return rootView;
+    }
+
+    private void viewLocationOnMap() {
+        SharedPreferences preferences = PreferenceManager.getDefaultSharedPreferences(getActivity());
+        String location = preferences.getString(getString(R.string.pref_location_key), getString(R.string.pref_location_default));
+        Uri uri = Uri.parse("geo:0,0").buildUpon().appendQueryParameter("q", location+",us").build();
+        Log.i(LOG_TAG, "using geo ur: " + uri.toString());
+        Intent intent = new Intent(Intent.ACTION_VIEW);
+        intent.setData(uri);
+        if (intent.resolveActivity(getActivity().getPackageManager()) != null) {
+            startActivity(intent);
+        }
+    }
+
+    private void fetchWeather() {
+        SharedPreferences preferences = PreferenceManager.getDefaultSharedPreferences(getActivity());
+        String location = preferences.getString(getString(R.string.pref_location_key), getString(R.string.pref_location_default));
+        String unit = preferences.getString(getString(R.string.pref_unit_key), getString(R.string.pref_unit_default));
+        new FetchWeatherTask().execute(location, unit);
     }
 
     public class FetchWeatherTask extends AsyncTask<String,Void,String[]> {
@@ -96,6 +135,8 @@ public class ForcastFragment extends Fragment {
         protected String[] doInBackground(String... strings) {
             // These two need to be declared outside the try/catch
             // so that they can be closed in the finally block.
+            String location = strings[0] + ",us";
+            String unit = strings[1];
             HttpURLConnection urlConnection = null;
             BufferedReader reader = null;
 
@@ -113,7 +154,7 @@ public class ForcastFragment extends Fragment {
                         .appendPath("2.5")
                         .appendPath("forecast")
                         .appendPath("daily")
-                        .appendQueryParameter("q", strings[0])
+                        .appendQueryParameter("q", location)
                         .appendQueryParameter("mode", "json")
                         .appendQueryParameter("units", "metric")
                         .appendQueryParameter("cnt", "7")
@@ -154,7 +195,7 @@ public class ForcastFragment extends Fragment {
                 String forecastJsonStr = buffer.toString();
                 Log.i(LOG_TAG, "forcast json string: " + forecastJsonStr);
 
-                forecastItems = getWeatherDataFromJson(forecastJsonStr, 7);
+                forecastItems = getWeatherDataFromJson(forecastJsonStr, 7, unit);
 
             } catch (JSONException e) {
                 Log.e(LOG_TAG, "Error ", e);
@@ -194,8 +235,12 @@ public class ForcastFragment extends Fragment {
         /**
          * Prepare the weather high/lows for presentation.
          */
-        private String formatHighLows(double high, double low) {
+        private String formatHighLows(double high, double low, String unit) {
             // For presentation, assume the user doesn't care about tenths of a degree.
+            if (unit.equalsIgnoreCase("Imperial")) {
+                high = (9/5) * high + 32;
+                low = (9/5) * low + 32;
+            }
             long roundedHigh = Math.round(high);
             long roundedLow = Math.round(low);
 
@@ -210,7 +255,7 @@ public class ForcastFragment extends Fragment {
          * Fortunately parsing is easy:  constructor takes the JSON string and converts it
          * into an Object hierarchy for us.
          */
-        private String[] getWeatherDataFromJson(String forecastJsonStr, int numDays)
+        private String[] getWeatherDataFromJson(String forecastJsonStr, int numDays, String unit)
                 throws JSONException {
 
             // These are the names of the JSON objects that need to be extracted.
@@ -269,7 +314,7 @@ public class ForcastFragment extends Fragment {
                 double high = temperatureObject.getDouble(OWM_MAX);
                 double low = temperatureObject.getDouble(OWM_MIN);
 
-                highAndLow = formatHighLows(high, low);
+                highAndLow = formatHighLows(high, low, unit);
                 resultStrs[i] = day + " - " + description + " - " + highAndLow;
             }
 
